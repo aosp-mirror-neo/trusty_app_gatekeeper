@@ -434,13 +434,17 @@ gatekeeper_error_t TrustyGateKeeper::RemoveAllUsers() {
 
     storage_open_dir_state *state;
     rc = storage_open_dir(session, "", &state);
-
+    if (rc < 0) {
+        TLOGE("Error:[%d] opening storage dir.\n", rc);
+        storage_close_session(session);
+        return ERROR_UNKNOWN;
+    }
     while (true) {
         uint8_t dir_flags = 0;
         char name[STORAGE_ID_LENGTH_MAX];
         rc = storage_read_dir(session, state, &dir_flags, name, STORAGE_ID_LENGTH_MAX);
         if (rc < 0) {
-            TLOGE("Error:[%d] opening storage dir.\n", rc);
+            TLOGE("Error:[%d] reading storage dir.\n", rc);
             storage_close_session(session);
             return ERROR_UNKNOWN;
         }
@@ -448,7 +452,7 @@ gatekeeper_error_t TrustyGateKeeper::RemoveAllUsers() {
             break;
         }
         if (!strncmp(name, GATEKEEPER_PREFIX, strlen(GATEKEEPER_PREFIX))) {
-            storage_delete_file(session, name, 0);
+            rc = storage_delete_file(session, name, 0);
             if (rc < 0) {
                 TLOGE("Error:[%d] deleting storage object.\n", rc);
                 storage_close_session(session);
