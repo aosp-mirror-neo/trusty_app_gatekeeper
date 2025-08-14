@@ -17,7 +17,8 @@ LOCAL_DIR := $(GET_LOCAL_DIR)
 
 MODULE := $(LOCAL_DIR)
 
-MANIFEST := $(LOCAL_DIR)/manifest.json
+GATEKEEPER_MANIFEST ?= $(LOCAL_DIR)/manifest.json
+MANIFEST := $(GATEKEEPER_MANIFEST)
 
 MODULE_SRCS += \
 	$(LOCAL_DIR)/trusty_gatekeeper.cpp \
