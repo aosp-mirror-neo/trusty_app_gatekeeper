@@ -25,7 +25,10 @@ MODULE_CRATE_NAME := gatekeeper_with_thal
 
 MODULE_LIBRARY_DEPS += \
 	$(call FIND_CRATE,log) \
+	$(call FIND_CRATE,fragile) \
 	frameworks/native/libs/binder/trusty/rust/rpcbinder \
+	system/gatekeeper/rust/ta \
+	system/gatekeeper/rust/wire \
 	trusty/user/base/interface/gatekeeper/aidl \
 	trusty/user/base/lib/tipc/rust \
 	trusty/user/base/lib/trusty-log \
