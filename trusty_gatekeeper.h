@@ -86,10 +86,6 @@ protected:
     virtual bool IsHardwareBacked() const;
 
 private:
-    bool SeedRngIfNeeded();
-    bool ShouldReseedRng();
-    bool ReseedRng();
-
     long DerivePasswordKey();
     void ClearPasswordKey();
 
@@ -102,8 +98,6 @@ private:
     bool WriteSecureFailureRecord(uint32_t uid, failure_record_t* record);
 
     UniquePtr<uint8_t[]> password_key_;
-    bool rng_initialized_;
-    int calls_since_reseed_;
 
     int num_mem_records_;
     UniquePtr<mem_failure_record_t[]> mem_records_;
