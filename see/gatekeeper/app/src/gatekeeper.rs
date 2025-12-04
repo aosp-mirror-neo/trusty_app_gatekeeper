@@ -183,7 +183,9 @@ pub fn main_loop() -> Result<(), TipcError> {
     dispatcher
         .add_service(Rc::new(direct), cfg)
         .expect("failed to add direct IGateKeeper to dispatcher");
-    Manager::<_, _, 1, 1>::new_with_dispatcher(dispatcher, [])
+    // Set max connection count to 2 in order to accommodate multiple connections.
+    // gatekeeperd establishes a connection, the other can be used by other clients/tests
+    Manager::<_, _, 1, 2>::new_with_dispatcher(dispatcher, [])
         .expect("Manager could not be created")
         .run_event_loop()
 }
