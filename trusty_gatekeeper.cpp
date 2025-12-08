@@ -28,9 +28,6 @@
 
 #include <openssl/hmac.h>
 
-#define CALLS_BETWEEN_RNG_RESEEDS 32
-#define RNG_RESEED_SIZE 64
-
 #define HMAC_SHA_256_KEY_SIZE 32
 
 #define GATEKEEPER_PREFIX "gatekeeper."
@@ -44,53 +41,17 @@ namespace gatekeeper {
 static const uint8_t DERIVATION_DATA[HMAC_SHA_256_KEY_SIZE] =
         "TrustyGateKeeperDerivationData0";
 
-TrustyGateKeeper::TrustyGateKeeper() : GateKeeper(),
-    cached_auth_token_key_len_(0) {
-    rng_initialized_ = false;
-    calls_since_reseed_ = 0;
+TrustyGateKeeper::TrustyGateKeeper()
+        : GateKeeper(), cached_auth_token_key_len_(0) {
     num_mem_records_ = 0;
-
-    SeedRngIfNeeded();
 }
 
 long TrustyGateKeeper::OpenSession() {
-    if (!SeedRngIfNeeded()) {
-        return ERR_NOT_READY;
-    }
-
     return DerivePasswordKey();
 }
 
 void TrustyGateKeeper::CloseSession() {
     ClearPasswordKey();
-}
-
-bool TrustyGateKeeper::SeedRngIfNeeded() {
-    if (ShouldReseedRng())
-        rng_initialized_ = ReseedRng();
-    return rng_initialized_;
-}
-
-bool TrustyGateKeeper::ShouldReseedRng() {
-    if (!rng_initialized_) {
-        return true;
-    }
-
-    if (++calls_since_reseed_ % CALLS_BETWEEN_RNG_RESEEDS == 0) {
-        return true;
-    }
-    return false;
-}
-
-bool TrustyGateKeeper::ReseedRng() {
-    UniquePtr<uint8_t[]> rand_seed(new uint8_t[RNG_RESEED_SIZE]);
-    memset(rand_seed.get(), 0, RNG_RESEED_SIZE);
-    if (trusty_rng_secure_rand(rand_seed.get(), RNG_RESEED_SIZE) != NO_ERROR) {
-        return false;
-    }
-
-    trusty_rng_add_entropy(rand_seed.get(), RNG_RESEED_SIZE);
-    return true;
 }
 
 long TrustyGateKeeper::DerivePasswordKey() {

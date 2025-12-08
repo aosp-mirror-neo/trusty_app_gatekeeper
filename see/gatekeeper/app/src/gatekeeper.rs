@@ -23,19 +23,97 @@ use android_hardware_gatekeeper::aidl::android::hardware::gatekeeper::{
     IGatekeeper::{BnGatekeeper, IGatekeeper},
 };
 use android_hardware_gatekeeper::binder;
+use core::cell::RefCell;
+use fragile::Fragile;
+use gk_ta::{
+    traits::{self, HmacKey, OpaqueOr},
+    Error, GatekeeperTa,
+};
 use log::info;
 use rpcbinder::RpcServer;
 use tipc::{service_dispatcher, wrap_service, Manager, PortCfg, TipcError};
 
 const IGATEKEEPER_PORT: &str = "android.hardware.gatekeeper.IGatekeeper/default";
 
+pub struct NoOpHmacSha256;
+
+impl traits::HmacSha256 for NoOpHmacSha256 {
+    fn sign(&self, _key: &OpaqueOr<HmacKey>, _data: &[u8]) -> Result<Vec<u8>, Error> {
+        unimplemented!("NoOpHmacSha256::sign is not implemented for Gatekeeper HAL")
+    }
+}
+
+pub struct NoOpStdClock;
+
+impl traits::MonotonicClock for NoOpStdClock {
+    fn now(&self) -> gk_wire::MillisecondsSinceEpoch {
+        unimplemented!("NoOpStdClock::now is not implemented for Gatekeeper HAL")
+    }
+}
+
+pub struct NoOpRng;
+
+impl traits::Rng for NoOpRng {
+    fn fill_bytes(&mut self, _dest: &mut [u8]) {
+        unimplemented!("NoOpRng::fill_bytes is not implemented for Gatekeeper HAL")
+    }
+}
+
+pub struct NoOpConstEq;
+
+impl traits::ConstTimeEq for NoOpConstEq {
+    fn eq(&self, _left: &[u8], _right: &[u8]) -> bool {
+        unimplemented!("NoOpConstEq::eq is not implemented for Gatekeeper HAL")
+    }
+}
+
+pub struct NoOpNonsecurePasswordKey;
+
+impl traits::PasswordKeyRetrieval for NoOpNonsecurePasswordKey {
+    fn key(&self) -> Result<OpaqueOr<HmacKey>, Error> {
+        unimplemented!("NoOpNonsecurePasswordKey::key is not implemented for Gatekeeper HAL")
+    }
+}
+
+pub struct NoOpStdFilesystem;
+
+impl traits::SecureFilesystem for NoOpStdFilesystem {
+    type Iter = NoOpStdDirIterator;
+    fn read(&self, _filename: &str) -> Result<Vec<u8>, Error> {
+        unimplemented!("NoOpStdFilesystem::read is not implemented for Gatekeeper HAL")
+    }
+    fn write(&self, _filename: &str, _data: &[u8]) -> Result<(), Error> {
+        unimplemented!("NoOpStdFilesystem::write is not implemented for Gatekeeper HAL")
+    }
+    fn delete(&self, _filename: &str) -> Result<(), Error> {
+        unimplemented!("NoOpStdFilesystem::delete is not implemented for Gatekeeper HAL")
+    }
+    fn list(&self) -> Result<Self::Iter, Error> {
+        unimplemented!("NoOpStdFilesystem::list is not implemented for Gatekeeper HAL")
+    }
+}
+
+pub struct NoOpStdDirIterator {}
+
+impl Iterator for NoOpStdDirIterator {
+    type Item = String;
+    fn next(&mut self) -> Option<Self::Item> {
+        unimplemented!("NoOpStdDirIterator::next is not implemented for Gatekeeper HAL")
+    }
+}
+
 /// Service implementing the IGatekeeper AIDL interface.
-pub struct GateKeeperWithTHal;
+///
+/// This struct holds the wrapper for the `GatekeeperTa`.
+pub struct GateKeeperWithTHal {
+    _gk_ta: Fragile<RefCell<GatekeeperTa>>,
+}
 
 impl GateKeeperWithTHal {
     /// Creates a new `IGatekeeper` binder.
-    pub fn new_binder() -> binder::Strong<dyn IGatekeeper> {
-        BnGatekeeper::new_binder(Self, binder::BinderFeatures::default())
+    pub fn new_binder(gk_ta: Fragile<RefCell<GatekeeperTa>>) -> binder::Strong<dyn IGatekeeper> {
+        let gatekeeper_with_thal = Self { _gk_ta: gk_ta };
+        BnGatekeeper::new_binder(gatekeeper_with_thal, binder::BinderFeatures::default())
     }
 }
 
@@ -43,11 +121,11 @@ impl binder::Interface for GateKeeperWithTHal {}
 
 impl IGatekeeper for GateKeeperWithTHal {
     fn deleteAllUsers(&self) -> binder::Result<()> {
-        unimplemented!("")
+        unimplemented!("GateKeeperWithThal::deleteAllUsers is not implemented for Gatekeeper HAL")
     }
 
     fn deleteUser(&self, _user_id: i32) -> binder::Result<()> {
-        unimplemented!("")
+        unimplemented!("GateKeeperWithThal::deleteUser is not implemented for Gatekeeper HAL")
     }
 
     fn enroll(
@@ -57,7 +135,7 @@ impl IGatekeeper for GateKeeperWithTHal {
         _current_password: &[u8],
         _new_password: &[u8],
     ) -> binder::Result<GatekeeperEnrollResponse> {
-        unimplemented!("")
+        unimplemented!("GateKeeperWithThal::enroll is not implemented for Gatekeeper HAL")
     }
 
     fn verify(
@@ -67,7 +145,7 @@ impl IGatekeeper for GateKeeperWithTHal {
         _handle: &[u8],
         _password: &[u8],
     ) -> binder::Result<GatekeeperVerifyResponse> {
-        unimplemented!("")
+        unimplemented!("GateKeeperWithThal::verify is not implemented for Gatekeeper HAL")
     }
 }
 
@@ -81,7 +159,18 @@ service_dispatcher! {
 
 pub fn main_loop() -> Result<(), TipcError> {
     info!("Starting GateKeeper with Trusted HAL TA!");
-    let service = GateKeeperWithTHal::new_binder();
+    let implementation = traits::Implementation {
+        rng: Box::new(NoOpRng),
+        clock: Box::new(NoOpStdClock),
+        compare: Box::new(NoOpConstEq),
+        hmac: Box::new(NoOpHmacSha256),
+        password: Box::new(NoOpNonsecurePasswordKey),
+        auth_key: Box::new(traits::ExplicitAuthKey::new(Box::new(NoOpHmacSha256))),
+        failures: Box::new(NoOpStdFilesystem),
+        shared_secret: None,
+    };
+    let ta = GatekeeperTa::new(implementation);
+    let service = GateKeeperWithTHal::new_binder(Fragile::new(RefCell::new(ta)));
     let direct_rpc_server = RpcServer::new(service.as_binder());
     let direct = IGatekeeperService(direct_rpc_server);
 
@@ -94,7 +183,9 @@ pub fn main_loop() -> Result<(), TipcError> {
     dispatcher
         .add_service(Rc::new(direct), cfg)
         .expect("failed to add direct IGateKeeper to dispatcher");
-    Manager::<_, _, 1, 1>::new_with_dispatcher(dispatcher, [])
+    // Set max connection count to 2 in order to accommodate multiple connections.
+    // gatekeeperd establishes a connection, the other can be used by other clients/tests
+    Manager::<_, _, 1, 2>::new_with_dispatcher(dispatcher, [])
         .expect("Manager could not be created")
         .run_event_loop()
 }
