@@ -54,14 +54,6 @@ impl traits::MonotonicClock for NoOpStdClock {
     }
 }
 
-pub struct NoOpRng;
-
-impl traits::Rng for NoOpRng {
-    fn fill_bytes(&mut self, _dest: &mut [u8]) {
-        unimplemented!("NoOpRng::fill_bytes is not implemented for Gatekeeper HAL")
-    }
-}
-
 pub struct NoOpConstEq;
 
 impl traits::ConstTimeEq for NoOpConstEq {
@@ -181,7 +173,7 @@ service_dispatcher! {
 pub fn main_loop() -> Result<(), TipcError> {
     info!("Starting GateKeeper with Trusted HAL TA!");
     let implementation = traits::Implementation {
-        rng: Box::new(NoOpRng),
+        rng: Box::new(gk_boringssl::Rng),
         clock: Box::new(NoOpStdClock),
         compare: Box::new(NoOpConstEq),
         hmac: Box::new(NoOpHmacSha256),
