@@ -16,6 +16,7 @@
 
 //! This module implements the IGatekeeper service with Trusted HAL
 
+use crate::hwcrypto_auth::HwCryptoAuthKey;
 use alloc::rc::Rc;
 use android_hardware_gatekeeper::aidl::android::hardware::gatekeeper::{
     GatekeeperEnrollResponse::GatekeeperEnrollResponse,
@@ -277,7 +278,7 @@ pub fn main_loop() -> Result<(), TipcError> {
         compare: Box::new(gk_boringssl::ConstEq),
         hmac: Box::new(gk_boringssl::HmacSha256),
         password: Box::new(NoOpNonsecurePasswordKey),
-        auth_key: Box::new(traits::ExplicitAuthKey::new(Box::new(gk_boringssl::HmacSha256))),
+        auth_key: Box::new(HwCryptoAuthKey::new().expect("HwCryptoAuthKey initialization failed")),
         failures: Box::new(NoOpStdFilesystem),
         shared_secret: None,
     };
