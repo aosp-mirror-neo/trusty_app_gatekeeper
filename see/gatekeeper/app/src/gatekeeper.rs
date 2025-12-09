@@ -20,7 +20,10 @@ use alloc::rc::Rc;
 use android_hardware_gatekeeper::aidl::android::hardware::gatekeeper::{
     GatekeeperEnrollResponse::GatekeeperEnrollResponse,
     GatekeeperVerifyResponse::GatekeeperVerifyResponse,
-    IGatekeeper::{BnGatekeeper, IGatekeeper},
+    IGatekeeper::{
+        BnGatekeeper, IGatekeeper, ERROR_GENERAL_FAILURE, ERROR_NOT_IMPLEMENTED,
+        ERROR_RETRY_TIMEOUT,
+    },
 };
 use android_hardware_gatekeeper::binder;
 use core::cell::RefCell;
@@ -102,17 +105,29 @@ impl Iterator for NoOpStdDirIterator {
     }
 }
 
+fn gk_ta_error_to_service_error(err: gk_ta::Error) -> binder::Status {
+    match err {
+        gk_ta::Error::RetryTimeout(_timeout) => binder::Status::from(ERROR_RETRY_TIMEOUT),
+        gk_ta::Error::Unimplemented => binder::Status::from(ERROR_NOT_IMPLEMENTED),
+        gk_ta::Error::NotFound
+        | gk_ta::Error::AllocationFailed
+        | gk_ta::Error::Internal
+        | gk_ta::Error::VerifyFailed
+        | gk_ta::Error::InvalidArgument => binder::Status::from(ERROR_GENERAL_FAILURE),
+    }
+}
+
 /// Service implementing the IGatekeeper AIDL interface.
 ///
 /// This struct holds the wrapper for the `GatekeeperTa`.
 pub struct GateKeeperWithTHal {
-    _gk_ta: Fragile<RefCell<GatekeeperTa>>,
+    gk_ta: Fragile<RefCell<GatekeeperTa>>,
 }
 
 impl GateKeeperWithTHal {
     /// Creates a new `IGatekeeper` binder.
     pub fn new_binder(gk_ta: Fragile<RefCell<GatekeeperTa>>) -> binder::Strong<dyn IGatekeeper> {
-        let gatekeeper_with_thal = Self { _gk_ta: gk_ta };
+        let gatekeeper_with_thal = Self { gk_ta };
         BnGatekeeper::new_binder(gatekeeper_with_thal, binder::BinderFeatures::default())
     }
 }
@@ -121,7 +136,13 @@ impl binder::Interface for GateKeeperWithTHal {}
 
 impl IGatekeeper for GateKeeperWithTHal {
     fn deleteAllUsers(&self) -> binder::Result<()> {
-        unimplemented!("GateKeeperWithThal::deleteAllUsers is not implemented for Gatekeeper HAL")
+        let mut ta = self
+            .gk_ta
+            .get()
+            .try_borrow_mut()
+            .expect("Gatekeeper TA is already borrowed; re-entrant call detected!");
+
+        Ok(ta.delete_all_users().map_err(gk_ta_error_to_service_error)?)
     }
 
     fn deleteUser(&self, _user_id: i32) -> binder::Result<()> {
