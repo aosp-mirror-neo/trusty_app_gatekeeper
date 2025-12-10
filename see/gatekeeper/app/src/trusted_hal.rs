@@ -19,14 +19,29 @@
 
 use crate::common::{Context, GkResult};
 use hwcrypto_thal::{HwCryptoKey, IHwCryptoKey};
+use secure_storage_aidl_wrapper::{Availability, Filesystem, ISecureStorage, Integrity, Session};
 use service_manager::wait_for_interface;
 
 const HW_CRYPTO_KEY_SERVICE_NAME: &str =
     "android.hardware.security.see.hwcrypto.IHwCryptoKey/default";
+const SECURE_STORAGE_SERVICE_NAME: &str =
+    "android.hardware.security.see.storage.ISecureStorage/default";
 
 /// Creates a new HwCryptoKey object which wraps the IHwCrptoKey binder.
 pub(crate) fn new_hw_crypto_key() -> GkResult<HwCryptoKey> {
     let hw_crypto_key_service = wait_for_interface::<dyn IHwCryptoKey>(HW_CRYPTO_KEY_SERVICE_NAME)
         .context("connect to IHwCryptoKey")?;
     Ok(HwCryptoKey::new(hw_crypto_key_service))
+}
+
+/// Creates a new transactional session.
+pub(crate) fn new_early_persistent_fs_session() -> GkResult<Session> {
+    let storage = wait_for_interface::<dyn ISecureStorage>(SECURE_STORAGE_SERVICE_NAME)
+        .context("connect to ISecureStorage service")?;
+    const EARLY_ACCESS_PERSISTENT_FS: Filesystem = Filesystem {
+        integrity: Integrity::TAMPER_DETECT,
+        availability: Availability::BEFORE_USERDATA,
+        persistent: true,
+    };
+    Session::new(&storage, &EARLY_ACCESS_PERSISTENT_FS).context("create tamper-detect session")
 }

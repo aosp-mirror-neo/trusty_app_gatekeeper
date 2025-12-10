@@ -16,7 +16,7 @@
 
 //! This module implements the IGatekeeper service with Trusted HAL
 
-use crate::hwcrypto_auth::HwCryptoAuthKey;
+use crate::{filesystem::VmSecureFilesystem, hwcrypto_auth::HwCryptoAuthKey};
 use alloc::rc::Rc;
 use android_hardware_gatekeeper::aidl::android::hardware::gatekeeper::{
     GatekeeperEnrollResponse::GatekeeperEnrollResponse,
@@ -58,33 +58,6 @@ pub struct NoOpNonsecurePasswordKey;
 impl traits::PasswordKeyRetrieval for NoOpNonsecurePasswordKey {
     fn key(&self) -> Result<OpaqueOr<HmacKey>, Error> {
         unimplemented!("NoOpNonsecurePasswordKey::key is not implemented for Gatekeeper HAL")
-    }
-}
-
-pub struct NoOpStdFilesystem;
-
-impl traits::SecureFilesystem for NoOpStdFilesystem {
-    type Iter = NoOpStdDirIterator;
-    fn read(&self, _filename: &str) -> Result<Vec<u8>, Error> {
-        unimplemented!("NoOpStdFilesystem::read is not implemented for Gatekeeper HAL")
-    }
-    fn write(&self, _filename: &str, _data: &[u8]) -> Result<(), Error> {
-        unimplemented!("NoOpStdFilesystem::write is not implemented for Gatekeeper HAL")
-    }
-    fn delete(&self, _filename: &str) -> Result<(), Error> {
-        unimplemented!("NoOpStdFilesystem::delete is not implemented for Gatekeeper HAL")
-    }
-    fn list(&self) -> Result<Self::Iter, Error> {
-        unimplemented!("NoOpStdFilesystem::list is not implemented for Gatekeeper HAL")
-    }
-}
-
-pub struct NoOpStdDirIterator {}
-
-impl Iterator for NoOpStdDirIterator {
-    type Item = String;
-    fn next(&mut self) -> Option<Self::Item> {
-        unimplemented!("NoOpStdDirIterator::next is not implemented for Gatekeeper HAL")
     }
 }
 
@@ -246,7 +219,9 @@ pub fn main_loop() -> Result<(), TipcError> {
         hmac: Box::new(gk_boringssl::HmacSha256),
         password: Box::new(NoOpNonsecurePasswordKey),
         auth_key: Box::new(HwCryptoAuthKey::new().expect("HwCryptoAuthKey initialization failed")),
-        failures: Box::new(NoOpStdFilesystem),
+        failures: Box::new(
+            VmSecureFilesystem::new().expect("VmSecureFilesystem initialization failed"),
+        ),
         shared_secret: None,
     };
     let ta = GatekeeperTa::new(implementation);

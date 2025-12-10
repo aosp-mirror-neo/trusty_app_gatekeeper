@@ -17,6 +17,7 @@
 //! Trusty GateKeeper with Trusted HAL.
 
 mod common;
+mod filesystem;
 mod gatekeeper;
 mod hwcrypto_auth;
 mod trusted_hal;
