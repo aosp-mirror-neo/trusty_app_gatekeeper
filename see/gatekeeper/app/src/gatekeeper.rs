@@ -38,14 +38,6 @@ use tipc::{service_dispatcher, wrap_service, Manager, PortCfg, TipcError};
 
 const IGATEKEEPER_PORT: &str = "android.hardware.gatekeeper.IGatekeeper/default";
 
-pub struct NoOpHmacSha256;
-
-impl traits::HmacSha256 for NoOpHmacSha256 {
-    fn sign(&self, _key: &OpaqueOr<HmacKey>, _data: &[u8]) -> Result<Vec<u8>, Error> {
-        unimplemented!("NoOpHmacSha256::sign is not implemented for Gatekeeper HAL")
-    }
-}
-
 pub struct NoOpStdClock;
 
 impl traits::MonotonicClock for NoOpStdClock {
@@ -168,9 +160,9 @@ pub fn main_loop() -> Result<(), TipcError> {
         rng: Box::new(gk_boringssl::Rng),
         clock: Box::new(NoOpStdClock),
         compare: Box::new(gk_boringssl::ConstEq),
-        hmac: Box::new(NoOpHmacSha256),
+        hmac: Box::new(gk_boringssl::HmacSha256),
         password: Box::new(NoOpNonsecurePasswordKey),
-        auth_key: Box::new(traits::ExplicitAuthKey::new(Box::new(NoOpHmacSha256))),
+        auth_key: Box::new(traits::ExplicitAuthKey::new(Box::new(gk_boringssl::HmacSha256))),
         failures: Box::new(NoOpStdFilesystem),
         shared_secret: None,
     };
