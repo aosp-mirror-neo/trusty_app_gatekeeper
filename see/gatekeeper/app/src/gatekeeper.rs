@@ -39,8 +39,6 @@ use gk_ta::{
     traits::{self, HmacKey, OpaqueOr},
     Error, GatekeeperTa,
 };
-use gk_wire::{PerformOpResponse, PerformOpReq, PerformOpRsp};
-use hal_wire::AsCborValue;
 use log::info;
 use rpcbinder::RpcServer;
 use tipc::{service_dispatcher, wrap_service, Manager, PortCfg, TipcError};
@@ -115,51 +113,30 @@ impl GateKeeperWithTHal {
         let gatekeeper_with_thal = Self { gk_ta };
         BnGatekeeper::new_binder(gatekeeper_with_thal, binder::BinderFeatures::default())
     }
-
-    fn execute_req(&self, req: PerformOpReq) -> binder::Result<PerformOpResponse> {
-        let mut ta = self
-            .gk_ta
-            .get()
-            .try_borrow_mut()
-            .expect("Gatekeeper TA is already borrowed; re-entrant call detected!");
-
-        let req_data = req.into_vec().map_err(|_| {
-            binder::Status::new_exception(binder::ExceptionCode::BAD_PARCELABLE, None)
-        })?;
-
-        let rsp_data = ta.process(&req_data);
-        PerformOpResponse::from_slice(&rsp_data)
-            .map_err(|_| binder::Status::new_exception(binder::ExceptionCode::BAD_PARCELABLE, None))
-    }
 }
 
 impl binder::Interface for GateKeeperWithTHal {}
 
 impl IGatekeeper for GateKeeperWithTHal {
     fn deleteAllUsers(&self) -> binder::Result<()> {
-        let mut ta = self
-            .gk_ta
-            .get()
-            .try_borrow_mut()
-            .expect("Gatekeeper TA is already borrowed; re-entrant call detected!");
-
+        let mut ta = self.gk_ta.get().try_borrow_mut().map_err(|_| {
+            binder::Status::new_service_specific_error_str(
+                ERROR_GENERAL_FAILURE,
+                Some("Gatekeeper TA is busy (re-entrant call detected)"),
+            )
+        })?;
         Ok(ta.delete_all_users().map_err(gk_ta_error_to_service_error)?)
     }
 
     fn deleteUser(&self, user_id: i32) -> binder::Result<()> {
+        let mut ta = self.gk_ta.get().try_borrow_mut().map_err(|_| {
+            binder::Status::new_service_specific_error_str(
+                ERROR_GENERAL_FAILURE,
+                Some("Gatekeeper TA is busy (re-entrant call detected)"),
+            )
+        })?;
         let user_id = gk_wire::AndroidUserId(user_id);
-        let req = PerformOpReq::DeleteUser(gk_wire::DeleteUserRequest { user_id });
-        match self.execute_req(req)? {
-            PerformOpResponse::Ok(PerformOpRsp::DeleteUser(_)) => Ok(()),
-            PerformOpResponse::Ok(_) => {
-                Err(binder::Status::new_exception(binder::ExceptionCode::ILLEGAL_STATE, None))
-            }
-            PerformOpResponse::RetryTimeout(_) => Err(binder::Status::new_service_specific_error(
-                gk_wire::ApiStatus::RetryTimeout as i32,
-                None,
-            )),
-            PerformOpResponse::Err(rc) => Err(binder::Status::new_service_specific_error(rc, None)),
-        }
+        Ok(ta.delete_user(user_id).map_err(gk_ta_error_to_service_error)?)
     }
 
     fn enroll(
@@ -169,33 +146,31 @@ impl IGatekeeper for GateKeeperWithTHal {
         current_password: &[u8],
         new_password: &[u8],
     ) -> binder::Result<GatekeeperEnrollResponse> {
+        let mut ta = self.gk_ta.get().try_borrow_mut().map_err(|_| {
+            binder::Status::new_service_specific_error_str(
+                ERROR_GENERAL_FAILURE,
+                Some("Gatekeeper TA is busy (re-entrant call detected)"),
+            )
+        })?;
         let user_id = gk_wire::AndroidUserId(user_id);
         let current_handle = gk_wire::PasswordHandle::from_raw(current_handle);
         let current_password = gk_wire::Password::from_raw(current_password);
         let new_password = gk_wire::Password(new_password.to_vec());
-        let req = PerformOpReq::Enroll(gk_wire::EnrollRequest {
-            user_id,
-            current_handle,
-            current_password,
-            new_password,
-        });
-        match self.execute_req(req)? {
-            PerformOpResponse::Ok(PerformOpRsp::Enroll(rsp)) => Ok(GatekeeperEnrollResponse {
+        let response = ta.enroll(user_id, &current_handle, &current_password, &new_password);
+        match response {
+            Ok((sid, handle)) => Ok(GatekeeperEnrollResponse {
                 statusCode: STATUS_OK,
                 timeoutMs: 0,
-                secureUserId: rsp.sid.0,
-                data: rsp.handle.0,
+                secureUserId: sid.0,
+                data: handle.0,
             }),
-            PerformOpResponse::Ok(_) => {
-                Err(binder::Status::new_exception(binder::ExceptionCode::ILLEGAL_STATE, None))
-            }
-            PerformOpResponse::RetryTimeout(timeout) => Ok(GatekeeperEnrollResponse {
+            Err(gk_ta::Error::RetryTimeout(timeout)) => Ok(GatekeeperEnrollResponse {
                 statusCode: ERROR_RETRY_TIMEOUT,
                 timeoutMs: timeout,
                 secureUserId: 0,
                 data: Vec::new(),
             }),
-            PerformOpResponse::Err(rc) => Err(binder::Status::new_service_specific_error(rc, None)),
+            Err(e) => Err(gk_ta_error_to_service_error(e)),
         }
     }
 
@@ -206,26 +181,28 @@ impl IGatekeeper for GateKeeperWithTHal {
         handle: &[u8],
         password: &[u8],
     ) -> binder::Result<GatekeeperVerifyResponse> {
+        let mut ta = self.gk_ta.get().try_borrow_mut().map_err(|_| {
+            binder::Status::new_service_specific_error_str(
+                ERROR_GENERAL_FAILURE,
+                Some("Gatekeeper TA is busy (re-entrant call detected)"),
+            )
+        })?;
         let user_id = gk_wire::AndroidUserId(user_id);
         let handle = gk_wire::PasswordHandle(handle.to_vec());
         let password = gk_wire::Password(password.to_vec());
-        let req =
-            PerformOpReq::Verify(gk_wire::VerifyRequest { user_id, challenge, handle, password });
-        match self.execute_req(req)? {
-            PerformOpResponse::Ok(PerformOpRsp::Verify(rsp)) => Ok(GatekeeperVerifyResponse {
-                statusCode: if rsp.request_reenroll { STATUS_REENROLL } else { STATUS_OK },
+        let response = ta.verify(user_id, challenge, &handle, &password);
+        match response {
+            Ok((request_reenroll, auth_token)) => Ok(GatekeeperVerifyResponse {
+                statusCode: if request_reenroll { STATUS_REENROLL } else { STATUS_OK },
                 timeoutMs: 0,
-                hardwareAuthToken: token_to_aidl(rsp.auth_token),
+                hardwareAuthToken: token_to_aidl(auth_token),
             }),
-            PerformOpResponse::Ok(_) => {
-                Err(binder::Status::new_exception(binder::ExceptionCode::ILLEGAL_STATE, None))
-            }
-            PerformOpResponse::RetryTimeout(timeout) => Ok(GatekeeperVerifyResponse {
+            Err(gk_ta::Error::RetryTimeout(timeout)) => Ok(GatekeeperVerifyResponse {
                 statusCode: ERROR_RETRY_TIMEOUT,
                 timeoutMs: timeout,
                 hardwareAuthToken: empty_auth_token(),
             }),
-            PerformOpResponse::Err(rc) => Err(binder::Status::new_service_specific_error(rc, None)),
+            Err(e) => Err(gk_ta_error_to_service_error(e)),
         }
     }
 }
