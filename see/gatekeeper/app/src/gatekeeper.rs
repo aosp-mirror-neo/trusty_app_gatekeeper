@@ -33,7 +33,7 @@ use android_hardware_security_secureclock::aidl::android::hardware::security::se
     Timestamp::Timestamp,
 };
 use android_hardware_gatekeeper::binder;
-use core::cell::RefCell;
+use core::cell::{RefCell, RefMut};
 use fragile::Fragile;
 use gk_ta::{
     traits::{self, HmacKey, OpaqueOr},
@@ -113,28 +113,28 @@ impl GateKeeperWithTHal {
         let gatekeeper_with_thal = Self { gk_ta };
         BnGatekeeper::new_binder(gatekeeper_with_thal, binder::BinderFeatures::default())
     }
+
+    /// Borrows the TA and throws error on re-entrant calls.
+    fn ta(&self) -> binder::Result<RefMut<'_, GatekeeperTa>> {
+        self.gk_ta.get().try_borrow_mut().map_err(|_| {
+            binder::Status::new_service_specific_error_str(
+                ERROR_GENERAL_FAILURE,
+                Some("Gatekeeper TA is busy (re-entrant call detected)"),
+            )
+        })
+    }
 }
 
 impl binder::Interface for GateKeeperWithTHal {}
 
 impl IGatekeeper for GateKeeperWithTHal {
     fn deleteAllUsers(&self) -> binder::Result<()> {
-        let mut ta = self.gk_ta.get().try_borrow_mut().map_err(|_| {
-            binder::Status::new_service_specific_error_str(
-                ERROR_GENERAL_FAILURE,
-                Some("Gatekeeper TA is busy (re-entrant call detected)"),
-            )
-        })?;
+        let mut ta = self.ta()?;
         Ok(ta.delete_all_users().map_err(gk_ta_error_to_service_error)?)
     }
 
     fn deleteUser(&self, user_id: i32) -> binder::Result<()> {
-        let mut ta = self.gk_ta.get().try_borrow_mut().map_err(|_| {
-            binder::Status::new_service_specific_error_str(
-                ERROR_GENERAL_FAILURE,
-                Some("Gatekeeper TA is busy (re-entrant call detected)"),
-            )
-        })?;
+        let mut ta = self.ta()?;
         let user_id = gk_wire::AndroidUserId(user_id);
         Ok(ta.delete_user(user_id).map_err(gk_ta_error_to_service_error)?)
     }
@@ -146,12 +146,7 @@ impl IGatekeeper for GateKeeperWithTHal {
         current_password: &[u8],
         new_password: &[u8],
     ) -> binder::Result<GatekeeperEnrollResponse> {
-        let mut ta = self.gk_ta.get().try_borrow_mut().map_err(|_| {
-            binder::Status::new_service_specific_error_str(
-                ERROR_GENERAL_FAILURE,
-                Some("Gatekeeper TA is busy (re-entrant call detected)"),
-            )
-        })?;
+        let mut ta = self.ta()?;
         let user_id = gk_wire::AndroidUserId(user_id);
         let current_handle = gk_wire::PasswordHandle::from_raw(current_handle);
         let current_password = gk_wire::Password::from_raw(current_password);
@@ -181,12 +176,7 @@ impl IGatekeeper for GateKeeperWithTHal {
         handle: &[u8],
         password: &[u8],
     ) -> binder::Result<GatekeeperVerifyResponse> {
-        let mut ta = self.gk_ta.get().try_borrow_mut().map_err(|_| {
-            binder::Status::new_service_specific_error_str(
-                ERROR_GENERAL_FAILURE,
-                Some("Gatekeeper TA is busy (re-entrant call detected)"),
-            )
-        })?;
+        let mut ta = self.ta()?;
         let user_id = gk_wire::AndroidUserId(user_id);
         let handle = gk_wire::PasswordHandle(handle.to_vec());
         let password = gk_wire::Password(password.to_vec());
