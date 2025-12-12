@@ -47,11 +47,11 @@ use tipc::{service_dispatcher, wrap_service, Manager, PortCfg, TipcError};
 
 const IGATEKEEPER_PORT: &str = "android.hardware.gatekeeper.IGatekeeper/default";
 
-pub struct NoOpStdClock;
+struct TrustyMonotonicClock;
 
-impl traits::MonotonicClock for NoOpStdClock {
+impl traits::MonotonicClock for TrustyMonotonicClock {
     fn now(&self) -> gk_wire::MillisecondsSinceEpoch {
-        unimplemented!("NoOpStdClock::now is not implemented for Gatekeeper HAL")
+        gk_wire::MillisecondsSinceEpoch(trusty_clock::now().into())
     }
 }
 
@@ -274,7 +274,7 @@ pub fn main_loop() -> Result<(), TipcError> {
     info!("Starting GateKeeper with Trusted HAL TA!");
     let implementation = traits::Implementation {
         rng: Box::new(gk_boringssl::Rng),
-        clock: Box::new(NoOpStdClock),
+        clock: Box::new(TrustyMonotonicClock),
         compare: Box::new(gk_boringssl::ConstEq),
         hmac: Box::new(gk_boringssl::HmacSha256),
         password: Box::new(NoOpNonsecurePasswordKey),

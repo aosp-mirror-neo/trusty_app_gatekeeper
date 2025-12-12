@@ -34,6 +34,7 @@ MODULE_LIBRARY_DEPS += \
 	system/gatekeeper/rust/wire \
 	system/security/hals/wire \
 	trusty/user/app/keymint/see/keymint/libs/lib-hwcrypto-thal \
+	trusty/user/app/keymint/see/keymint/libs/lib-trusty-clock \
 	trusty/user/base/interface/gatekeeper/aidl \
 	trusty/user/base/lib/service_manager/client \
 	trusty/user/base/lib/tipc/rust \
