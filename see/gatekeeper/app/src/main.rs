@@ -17,6 +17,8 @@
 //! Trusty GateKeeper with Trusted HAL.
 
 mod gatekeeper;
+mod hwcrypto_auth;
+mod trusted_hal;
 
 use crate::gatekeeper::main_loop;
 

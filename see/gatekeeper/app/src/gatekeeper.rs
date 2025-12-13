@@ -16,14 +16,21 @@
 
 //! This module implements the IGatekeeper service with Trusted HAL
 
+use crate::hwcrypto_auth::HwCryptoAuthKey;
 use alloc::rc::Rc;
 use android_hardware_gatekeeper::aidl::android::hardware::gatekeeper::{
     GatekeeperEnrollResponse::GatekeeperEnrollResponse,
     GatekeeperVerifyResponse::GatekeeperVerifyResponse,
     IGatekeeper::{
         BnGatekeeper, IGatekeeper, ERROR_GENERAL_FAILURE, ERROR_NOT_IMPLEMENTED,
-        ERROR_RETRY_TIMEOUT,
+        ERROR_RETRY_TIMEOUT, STATUS_OK, STATUS_REENROLL,
     },
+};
+use android_hardware_security_keymint::aidl::android::hardware::security::keymint::{
+    HardwareAuthToken::HardwareAuthToken, HardwareAuthenticatorType::HardwareAuthenticatorType,
+};
+use android_hardware_security_secureclock::aidl::android::hardware::security::secureclock::{
+    Timestamp::Timestamp,
 };
 use android_hardware_gatekeeper::binder;
 use core::cell::RefCell;
@@ -32,17 +39,19 @@ use gk_ta::{
     traits::{self, HmacKey, OpaqueOr},
     Error, GatekeeperTa,
 };
+use gk_wire::{PerformOpResponse, PerformOpReq, PerformOpRsp};
+use hal_wire::AsCborValue;
 use log::info;
 use rpcbinder::RpcServer;
 use tipc::{service_dispatcher, wrap_service, Manager, PortCfg, TipcError};
 
 const IGATEKEEPER_PORT: &str = "android.hardware.gatekeeper.IGatekeeper/default";
 
-pub struct NoOpStdClock;
+struct TrustyMonotonicClock;
 
-impl traits::MonotonicClock for NoOpStdClock {
+impl traits::MonotonicClock for TrustyMonotonicClock {
     fn now(&self) -> gk_wire::MillisecondsSinceEpoch {
-        unimplemented!("NoOpStdClock::now is not implemented for Gatekeeper HAL")
+        gk_wire::MillisecondsSinceEpoch(trusty_clock::now().into())
     }
 }
 
@@ -106,6 +115,22 @@ impl GateKeeperWithTHal {
         let gatekeeper_with_thal = Self { gk_ta };
         BnGatekeeper::new_binder(gatekeeper_with_thal, binder::BinderFeatures::default())
     }
+
+    fn execute_req(&self, req: PerformOpReq) -> binder::Result<PerformOpResponse> {
+        let mut ta = self
+            .gk_ta
+            .get()
+            .try_borrow_mut()
+            .expect("Gatekeeper TA is already borrowed; re-entrant call detected!");
+
+        let req_data = req.into_vec().map_err(|_| {
+            binder::Status::new_exception(binder::ExceptionCode::BAD_PARCELABLE, None)
+        })?;
+
+        let rsp_data = ta.process(&req_data);
+        PerformOpResponse::from_slice(&rsp_data)
+            .map_err(|_| binder::Status::new_exception(binder::ExceptionCode::BAD_PARCELABLE, None))
+    }
 }
 
 impl binder::Interface for GateKeeperWithTHal {}
@@ -121,28 +146,119 @@ impl IGatekeeper for GateKeeperWithTHal {
         Ok(ta.delete_all_users().map_err(gk_ta_error_to_service_error)?)
     }
 
-    fn deleteUser(&self, _user_id: i32) -> binder::Result<()> {
-        unimplemented!("GateKeeperWithThal::deleteUser is not implemented for Gatekeeper HAL")
+    fn deleteUser(&self, user_id: i32) -> binder::Result<()> {
+        let user_id = gk_wire::AndroidUserId(user_id);
+        let req = PerformOpReq::DeleteUser(gk_wire::DeleteUserRequest { user_id });
+        match self.execute_req(req)? {
+            PerformOpResponse::Ok(PerformOpRsp::DeleteUser(_)) => Ok(()),
+            PerformOpResponse::Ok(_) => {
+                Err(binder::Status::new_exception(binder::ExceptionCode::ILLEGAL_STATE, None))
+            }
+            PerformOpResponse::RetryTimeout(_) => Err(binder::Status::new_service_specific_error(
+                gk_wire::ApiStatus::RetryTimeout as i32,
+                None,
+            )),
+            PerformOpResponse::Err(rc) => Err(binder::Status::new_service_specific_error(rc, None)),
+        }
     }
 
     fn enroll(
         &self,
-        _user_id: i32,
-        _current_handle: &[u8],
-        _current_password: &[u8],
-        _new_password: &[u8],
+        user_id: i32,
+        current_handle: &[u8],
+        current_password: &[u8],
+        new_password: &[u8],
     ) -> binder::Result<GatekeeperEnrollResponse> {
-        unimplemented!("GateKeeperWithThal::enroll is not implemented for Gatekeeper HAL")
+        let user_id = gk_wire::AndroidUserId(user_id);
+        let current_handle = gk_wire::PasswordHandle::from_raw(current_handle);
+        let current_password = gk_wire::Password::from_raw(current_password);
+        let new_password = gk_wire::Password(new_password.to_vec());
+        let req = PerformOpReq::Enroll(gk_wire::EnrollRequest {
+            user_id,
+            current_handle,
+            current_password,
+            new_password,
+        });
+        match self.execute_req(req)? {
+            PerformOpResponse::Ok(PerformOpRsp::Enroll(rsp)) => Ok(GatekeeperEnrollResponse {
+                statusCode: STATUS_OK,
+                timeoutMs: 0,
+                secureUserId: rsp.sid.0,
+                data: rsp.handle.0,
+            }),
+            PerformOpResponse::Ok(_) => {
+                Err(binder::Status::new_exception(binder::ExceptionCode::ILLEGAL_STATE, None))
+            }
+            PerformOpResponse::RetryTimeout(timeout) => Ok(GatekeeperEnrollResponse {
+                statusCode: ERROR_RETRY_TIMEOUT,
+                timeoutMs: timeout,
+                secureUserId: 0,
+                data: Vec::new(),
+            }),
+            PerformOpResponse::Err(rc) => Err(binder::Status::new_service_specific_error(rc, None)),
+        }
     }
 
     fn verify(
         &self,
-        _user_id: i32,
-        _challenge: i64,
-        _handle: &[u8],
-        _password: &[u8],
+        user_id: i32,
+        challenge: i64,
+        handle: &[u8],
+        password: &[u8],
     ) -> binder::Result<GatekeeperVerifyResponse> {
-        unimplemented!("GateKeeperWithThal::verify is not implemented for Gatekeeper HAL")
+        let user_id = gk_wire::AndroidUserId(user_id);
+        let handle = gk_wire::PasswordHandle(handle.to_vec());
+        let password = gk_wire::Password(password.to_vec());
+        let req =
+            PerformOpReq::Verify(gk_wire::VerifyRequest { user_id, challenge, handle, password });
+        match self.execute_req(req)? {
+            PerformOpResponse::Ok(PerformOpRsp::Verify(rsp)) => Ok(GatekeeperVerifyResponse {
+                statusCode: if rsp.request_reenroll { STATUS_REENROLL } else { STATUS_OK },
+                timeoutMs: 0,
+                hardwareAuthToken: token_to_aidl(rsp.auth_token),
+            }),
+            PerformOpResponse::Ok(_) => {
+                Err(binder::Status::new_exception(binder::ExceptionCode::ILLEGAL_STATE, None))
+            }
+            PerformOpResponse::RetryTimeout(timeout) => Ok(GatekeeperVerifyResponse {
+                statusCode: ERROR_RETRY_TIMEOUT,
+                timeoutMs: timeout,
+                hardwareAuthToken: empty_auth_token(),
+            }),
+            PerformOpResponse::Err(rc) => Err(binder::Status::new_service_specific_error(rc, None)),
+        }
+    }
+}
+
+fn token_to_aidl(token: gk_wire::HardwareAuthToken) -> HardwareAuthToken {
+    HardwareAuthToken {
+        challenge: token.challenge,
+        userId: token.user_id,
+        authenticatorId: token.authenticator_id,
+        authenticatorType: auth_type_to_aidl(token.authenticator_type),
+        timestamp: Timestamp { milliSeconds: token.timestamp.0 },
+        mac: token.mac,
+    }
+}
+
+/// Convert a [`gk_wire::HardwareAuthenticatorType`] into an AIDL [`HardwareAuthenticatorType`].
+fn auth_type_to_aidl(auth_type: gk_wire::HardwareAuthenticatorType) -> HardwareAuthenticatorType {
+    match auth_type {
+        gk_wire::HardwareAuthenticatorType::None => HardwareAuthenticatorType::NONE,
+        gk_wire::HardwareAuthenticatorType::Password => HardwareAuthenticatorType::PASSWORD,
+        gk_wire::HardwareAuthenticatorType::Fingerprint => HardwareAuthenticatorType::FINGERPRINT,
+        gk_wire::HardwareAuthenticatorType::Any => HardwareAuthenticatorType::ANY,
+    }
+}
+
+fn empty_auth_token() -> HardwareAuthToken {
+    HardwareAuthToken {
+        challenge: 0,
+        userId: 0,
+        authenticatorId: 0,
+        authenticatorType: HardwareAuthenticatorType::NONE,
+        timestamp: Timestamp { milliSeconds: 0 },
+        mac: Vec::new(),
     }
 }
 
@@ -158,11 +274,11 @@ pub fn main_loop() -> Result<(), TipcError> {
     info!("Starting GateKeeper with Trusted HAL TA!");
     let implementation = traits::Implementation {
         rng: Box::new(gk_boringssl::Rng),
-        clock: Box::new(NoOpStdClock),
+        clock: Box::new(TrustyMonotonicClock),
         compare: Box::new(gk_boringssl::ConstEq),
         hmac: Box::new(gk_boringssl::HmacSha256),
         password: Box::new(NoOpNonsecurePasswordKey),
-        auth_key: Box::new(traits::ExplicitAuthKey::new(Box::new(gk_boringssl::HmacSha256))),
+        auth_key: Box::new(HwCryptoAuthKey::new().expect("HwCryptoAuthKey initialization failed")),
         failures: Box::new(NoOpStdFilesystem),
         shared_secret: None,
     };

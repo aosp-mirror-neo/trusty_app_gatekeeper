@@ -24,15 +24,21 @@ MODULE_SRCS += \
 MODULE_CRATE_NAME := gatekeeper_with_thal
 
 MODULE_LIBRARY_DEPS += \
-	$(call FIND_CRATE,log) \
 	$(call FIND_CRATE,fragile) \
+	$(call FIND_CRATE,log) \
 	frameworks/native/libs/binder/trusty/rust/rpcbinder \
+	hardware/interfaces/security/keymint/aidl \
+	hardware/interfaces/security/secureclock/aidl \
 	system/gatekeeper/rust/boringssl \
 	system/gatekeeper/rust/ta \
 	system/gatekeeper/rust/wire \
+	system/security/hals/wire \
+	trusty/user/app/keymint/see/keymint/libs/lib-hwcrypto-thal \
+	trusty/user/app/keymint/see/keymint/libs/lib-trusty-clock \
 	trusty/user/base/interface/gatekeeper/aidl \
+	trusty/user/base/lib/service_manager/client \
 	trusty/user/base/lib/tipc/rust \
 	trusty/user/base/lib/trusty-log \
-	trusty/user/base/lib/trusty-std \
+	trusty/user/base/lib/trusty-std
 
 include make/trusted_app.mk
