@@ -16,13 +16,13 @@
 
 //! This module implements the AuthKeyManagement trait for Gatekeeper
 
-use super::trusted_hal::new_hw_crypto_key;
-use gk_ta::{
-    traits::{AuthKeyManagement, HmacKey, OpaqueOr},
-    Error,
+use crate::{
+    common::{Context, GkResult},
+    trusted_hal::new_hw_crypto_key,
 };
+use gk_ta::traits::{AuthKeyManagement, HmacKey, OpaqueOr};
 use hwcrypto_thal::HwCryptoHmac;
-use log::{error, warn};
+use log::warn;
 
 /// This struct wraps HwCryptoHmac and implements AuthKeyManagement for Gatekeeper.
 #[derive(Debug)]
@@ -32,21 +32,18 @@ pub(crate) struct HwCryptoAuthKey {
 
 impl HwCryptoAuthKey {
     /// Creates a new `HwCryptoAuthKey` instance.
-    pub(crate) fn new() -> Result<Self, Error> {
+    pub(crate) fn new() -> GkResult<Self> {
         let hw_crypto_key = new_hw_crypto_key()?;
         Ok(Self { inner: hw_crypto_key.into() })
     }
 }
 
 impl AuthKeyManagement for HwCryptoAuthKey {
-    fn sign(&self, data: &[u8]) -> Result<Vec<u8>, Error> {
-        self.inner.hmac(data).map_err(|e| {
-            error!("HwCryptoAuthKey::sign failed: {:?}", e);
-            Error::Internal
-        })
+    fn sign(&self, data: &[u8]) -> GkResult<Vec<u8>> {
+        self.inner.hmac(data).context("sign auth key")
     }
 
-    fn key_agreed(&mut self, _key: OpaqueOr<HmacKey>) -> Result<(), Error> {
+    fn key_agreed(&mut self, _key: OpaqueOr<HmacKey>) -> GkResult<()> {
         warn!(
             "HwCryptoAuthKey::key_agreed: HwCryptoHmac configured;
         using KEYMINT_SHARED_HMAC_KEY for signing."
