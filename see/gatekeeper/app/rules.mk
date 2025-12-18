@@ -36,6 +36,7 @@ MODULE_LIBRARY_DEPS += \
 	trusty/user/app/keymint/see/keymint/libs/lib-hwcrypto-thal \
 	trusty/user/app/keymint/see/keymint/libs/lib-trusty-clock \
 	trusty/user/base/interface/gatekeeper/aidl \
+	trusty/user/base/lib/secure-storage-aidl-wrapper-rust \
 	trusty/user/base/lib/service_manager/client \
 	trusty/user/base/lib/tipc/rust \
 	trusty/user/base/lib/trusty-log \
