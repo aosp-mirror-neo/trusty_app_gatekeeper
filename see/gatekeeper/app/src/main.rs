@@ -20,6 +20,7 @@ mod common;
 mod filesystem;
 mod gatekeeper;
 mod hwcrypto_auth;
+mod password;
 mod trusted_hal;
 
 use crate::gatekeeper::main_loop;
