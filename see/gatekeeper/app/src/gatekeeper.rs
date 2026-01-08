@@ -16,7 +16,7 @@
 
 //! This module implements the IGatekeeper service with Trusted HAL
 
-use crate::{filesystem::VmSecureFilesystem, hwcrypto_auth::HwCryptoAuthKey};
+use crate::{common::GkResult, filesystem::VmSecureFilesystem, hwcrypto_auth::HwCryptoAuthKey};
 use alloc::rc::Rc;
 use android_hardware_gatekeeper::aidl::android::hardware::gatekeeper::{
     GatekeeperEnrollResponse::GatekeeperEnrollResponse,
@@ -210,21 +210,23 @@ service_dispatcher! {
     }
 }
 
-pub fn main_loop() -> Result<(), TipcError> {
-    info!("Starting GateKeeper with Trusted HAL TA!");
+fn new_gatekeeper_ta() -> GkResult<GatekeeperTa> {
     let implementation = traits::Implementation {
         rng: Box::new(gk_boringssl::Rng),
         clock: Box::new(TrustyMonotonicClock),
         compare: Box::new(gk_boringssl::ConstEq),
         hmac: Box::new(gk_boringssl::HmacSha256),
         password: Box::new(NoOpNonsecurePasswordKey),
-        auth_key: Box::new(HwCryptoAuthKey::new().expect("HwCryptoAuthKey initialization failed")),
-        failures: Box::new(
-            VmSecureFilesystem::new().expect("VmSecureFilesystem initialization failed"),
-        ),
+        auth_key: Box::new(HwCryptoAuthKey::new()?),
+        failures: Box::new(VmSecureFilesystem::new()?),
         shared_secret: None,
     };
-    let ta = GatekeeperTa::new(implementation);
+    Ok(GatekeeperTa::new(implementation))
+}
+
+pub fn main_loop() -> Result<(), TipcError> {
+    info!("Starting GateKeeper with Trusted HAL TA!");
+    let ta = new_gatekeeper_ta().expect("initialize GatekeeperTa");
     let service = GateKeeperWithTHal::new_binder(Fragile::new(RefCell::new(ta)));
     let direct_rpc_server = RpcServer::new(service.as_binder());
     let direct = IGatekeeperService(direct_rpc_server);
