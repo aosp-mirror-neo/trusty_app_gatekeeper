@@ -16,7 +16,7 @@
 
 //! This module implements the IGatekeeper service with Trusted HAL
 
-use crate::{common::GkResult, filesystem::VmSecureFilesystem, hwcrypto_auth::HwCryptoAuthKey};
+use crate::{common::GkResult, filesystem::VmSecureFilesystem, hwcrypto_auth::HwCryptoAuthKey, password::VmPasswordKeyRetrieval};
 use alloc::rc::Rc;
 use android_hardware_gatekeeper::aidl::android::hardware::gatekeeper::{
     GatekeeperEnrollResponse::GatekeeperEnrollResponse,
@@ -36,8 +36,8 @@ use android_hardware_gatekeeper::binder;
 use core::cell::{RefCell, RefMut};
 use fragile::Fragile;
 use gk_ta::{
-    traits::{self, HmacKey, OpaqueOr},
-    Error, GatekeeperTa,
+    traits,
+    GatekeeperTa,
 };
 use log::info;
 use rpcbinder::RpcServer;
@@ -50,14 +50,6 @@ struct TrustyMonotonicClock;
 impl traits::MonotonicClock for TrustyMonotonicClock {
     fn now(&self) -> gk_wire::MillisecondsSinceEpoch {
         gk_wire::MillisecondsSinceEpoch(trusty_clock::now().into())
-    }
-}
-
-pub struct NoOpNonsecurePasswordKey;
-
-impl traits::PasswordKeyRetrieval for NoOpNonsecurePasswordKey {
-    fn key(&self) -> Result<OpaqueOr<HmacKey>, Error> {
-        unimplemented!("NoOpNonsecurePasswordKey::key is not implemented for Gatekeeper HAL")
     }
 }
 
@@ -216,7 +208,7 @@ fn new_gatekeeper_ta() -> GkResult<GatekeeperTa> {
         clock: Box::new(TrustyMonotonicClock),
         compare: Box::new(gk_boringssl::ConstEq),
         hmac: Box::new(gk_boringssl::HmacSha256),
-        password: Box::new(NoOpNonsecurePasswordKey),
+        password: Box::new(VmPasswordKeyRetrieval::new()?),
         auth_key: Box::new(HwCryptoAuthKey::new()?),
         failures: Box::new(VmSecureFilesystem::new()?),
         shared_secret: None,
