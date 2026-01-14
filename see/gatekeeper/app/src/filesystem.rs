@@ -46,6 +46,6 @@ impl traits::SecureFilesystem for VmSecureFilesystem {
         self.session.delete_file(filename).context("delete file")
     }
     fn list(&self) -> GkResult<Self::Iter> {
-        self.session.list_files_in_dir(".").map(|files| files.into_iter()).context("list files")
+        self.session.list_files_in_dir("").map(|files| files.into_iter()).context("list files")
     }
 }
