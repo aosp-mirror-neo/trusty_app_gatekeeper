@@ -22,6 +22,7 @@ use crate::{
 };
 use alloc::vec;
 use gk_ta::{traits, Error};
+use log::debug;
 use secure_storage_aidl_wrapper::{Session, OPEN_READ_WRITE};
 
 pub(crate) struct VmSecureFilesystem {
@@ -37,15 +38,19 @@ impl VmSecureFilesystem {
 impl traits::SecureFilesystem for VmSecureFilesystem {
     type Iter = vec::IntoIter<String>;
     fn read(&self, filename: &str) -> GkResult<Vec<u8>> {
+        debug!("read: filename={filename}");
         self.session.read_file(filename).context("read file")?.ok_or(Error::NotFound)
     }
     fn write(&self, filename: &str, data: &[u8]) -> GkResult<()> {
+        debug!("write: filename={filename}");
         self.session.write_file(filename, data, &OPEN_READ_WRITE).context("write to file")
     }
     fn delete(&self, filename: &str) -> GkResult<()> {
+        debug!("delete: filename={filename}");
         self.session.delete_file(filename).context("delete file")
     }
     fn list(&self) -> GkResult<Self::Iter> {
+        debug!("list files");
         self.session.list_files_in_dir("").map(|files| files.into_iter()).context("list files")
     }
 }

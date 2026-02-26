@@ -40,7 +40,7 @@ use gk_ta::{
     GatekeeperTa,
 };
 use hwcrypto_thal::HwCryptoKey;
-use log::info;
+use log::{debug, error, info};
 use rpcbinder::RpcServer;
 use tipc::{service_dispatcher, wrap_service, Manager, PortCfg, TipcError};
 
@@ -96,11 +96,13 @@ impl binder::Interface for GateKeeperWithTHal {}
 
 impl IGatekeeper for GateKeeperWithTHal {
     fn deleteAllUsers(&self) -> binder::Result<()> {
+        debug!("deleteAllUsers");
         let mut ta = self.ta()?;
         Ok(ta.delete_all_users().map_err(gk_ta_error_to_service_error)?)
     }
 
     fn deleteUser(&self, user_id: i32) -> binder::Result<()> {
+        debug!("deleteUser: user_id={user_id}");
         let mut ta = self.ta()?;
         let user_id = gk_wire::AndroidUserId(user_id);
         Ok(ta.delete_user(user_id).map_err(gk_ta_error_to_service_error)?)
@@ -113,6 +115,7 @@ impl IGatekeeper for GateKeeperWithTHal {
         current_password: &[u8],
         new_password: &[u8],
     ) -> binder::Result<GatekeeperEnrollResponse> {
+        debug!("enroll: user_id={user_id:?}");
         let mut ta = self.ta()?;
         let user_id = gk_wire::AndroidUserId(user_id);
         let current_handle = gk_wire::PasswordHandle::from_raw(current_handle);
@@ -120,19 +123,28 @@ impl IGatekeeper for GateKeeperWithTHal {
         let new_password = gk_wire::Password(new_password.to_vec());
         let response = ta.enroll(user_id, &current_handle, &current_password, &new_password);
         match response {
-            Ok((sid, handle)) => Ok(GatekeeperEnrollResponse {
-                statusCode: STATUS_OK,
-                timeoutMs: 0,
-                secureUserId: sid.0,
-                data: handle.0,
-            }),
-            Err(gk_ta::Error::RetryTimeout(timeout)) => Ok(GatekeeperEnrollResponse {
-                statusCode: ERROR_RETRY_TIMEOUT,
-                timeoutMs: timeout,
-                secureUserId: 0,
-                data: Vec::new(),
-            }),
-            Err(e) => Err(gk_ta_error_to_service_error(e)),
+            Ok((sid, handle)) => {
+                info!("enroll: success for user_id={user_id:?}");
+                Ok(GatekeeperEnrollResponse {
+                    statusCode: STATUS_OK,
+                    timeoutMs: 0,
+                    secureUserId: sid.0,
+                    data: handle.0,
+                })
+            }
+            Err(gk_ta::Error::RetryTimeout(timeout)) => {
+                info!("enroll: retry timeout {timeout}ms for user_id={user_id:?}");
+                Ok(GatekeeperEnrollResponse {
+                    statusCode: ERROR_RETRY_TIMEOUT,
+                    timeoutMs: timeout,
+                    secureUserId: 0,
+                    data: Vec::new(),
+                })
+            }
+            Err(e) => {
+                error!("enroll: failed for user_id={user_id:?}: {e:?}");
+                Err(gk_ta_error_to_service_error(e))
+            }
         }
     }
 
@@ -143,23 +155,33 @@ impl IGatekeeper for GateKeeperWithTHal {
         handle: &[u8],
         password: &[u8],
     ) -> binder::Result<GatekeeperVerifyResponse> {
+        debug!("verify: user_id={user_id:?}, challenge={challenge}");
         let mut ta = self.ta()?;
         let user_id = gk_wire::AndroidUserId(user_id);
         let handle = gk_wire::PasswordHandle(handle.to_vec());
         let password = gk_wire::Password(password.to_vec());
         let response = ta.verify(user_id, challenge, &handle, &password);
         match response {
-            Ok((request_reenroll, auth_token)) => Ok(GatekeeperVerifyResponse {
-                statusCode: if request_reenroll { STATUS_REENROLL } else { STATUS_OK },
-                timeoutMs: 0,
-                hardwareAuthToken: token_to_aidl(auth_token),
-            }),
-            Err(gk_ta::Error::RetryTimeout(timeout)) => Ok(GatekeeperVerifyResponse {
-                statusCode: ERROR_RETRY_TIMEOUT,
-                timeoutMs: timeout,
-                hardwareAuthToken: empty_auth_token(),
-            }),
-            Err(e) => Err(gk_ta_error_to_service_error(e)),
+            Ok((request_reenroll, auth_token)) => {
+                info!("verify: success for user_id={user_id:?} (reenroll={request_reenroll})");
+                Ok(GatekeeperVerifyResponse {
+                    statusCode: if request_reenroll { STATUS_REENROLL } else { STATUS_OK },
+                    timeoutMs: 0,
+                    hardwareAuthToken: token_to_aidl(auth_token),
+                })
+            }
+            Err(gk_ta::Error::RetryTimeout(timeout)) => {
+                info!("verify: retry timeout {timeout}ms for user_id={user_id:?}");
+                Ok(GatekeeperVerifyResponse {
+                    statusCode: ERROR_RETRY_TIMEOUT,
+                    timeoutMs: timeout,
+                    hardwareAuthToken: empty_auth_token(),
+                })
+            }
+            Err(e) => {
+                error!("verify: failed for user_id={user_id:?}: {e:?}");
+                Err(gk_ta_error_to_service_error(e))
+            }
         }
     }
 }

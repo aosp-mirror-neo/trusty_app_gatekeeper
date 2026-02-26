@@ -19,6 +19,7 @@
 
 use crate::common::{Context, GkResult};
 use hwcrypto_thal::{HwCryptoKey, IHwCryptoKey};
+use log::debug;
 use secure_storage_aidl_wrapper::{Availability, Filesystem, ISecureStorage, Integrity, Session};
 use service_manager::wait_for_interface;
 
@@ -29,6 +30,7 @@ const SECURE_STORAGE_SERVICE_NAME: &str =
 
 /// Creates a new HwCryptoKey object which wraps the IHwCrptoKey binder.
 pub(crate) fn new_hw_crypto_key() -> GkResult<HwCryptoKey> {
+    debug!("connecting to {HW_CRYPTO_KEY_SERVICE_NAME}");
     let hw_crypto_key_service = wait_for_interface::<dyn IHwCryptoKey>(HW_CRYPTO_KEY_SERVICE_NAME)
         .context("connect to IHwCryptoKey")?;
     Ok(HwCryptoKey::new(hw_crypto_key_service))
@@ -36,6 +38,7 @@ pub(crate) fn new_hw_crypto_key() -> GkResult<HwCryptoKey> {
 
 /// Creates a new transactional session.
 pub(crate) fn new_early_persistent_fs_session() -> GkResult<Session> {
+    debug!("connecting to {SECURE_STORAGE_SERVICE_NAME}");
     let storage = wait_for_interface::<dyn ISecureStorage>(SECURE_STORAGE_SERVICE_NAME)
         .context("connect to ISecureStorage service")?;
     const EARLY_ACCESS_PERSISTENT_FS: Filesystem = Filesystem {

@@ -25,7 +25,17 @@ mod trusted_hal;
 
 use crate::gatekeeper::main_loop;
 
+fn log_formatter(record: &log::Record) -> String {
+    let line = record.line().unwrap_or(0);
+    let file = record.file().unwrap_or("unknown file");
+    format!("{}: gatekeeper-in-vm: {}:{} {}\n", record.level(), file, line, record.args())
+}
+
 fn main() {
-    trusty_log::init();
+    let config = trusty_log::TrustyLoggerConfig::default()
+        .with_min_level(log::Level::Debug)
+        .format(&log_formatter);
+
+    trusty_log::init_with_config(config);
     main_loop().expect("GateKeeper with Trusted HAL TA quits unexpectedly.");
 }

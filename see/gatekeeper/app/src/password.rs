@@ -79,6 +79,7 @@ impl VmPasswordKeyRetrieval {
 
 impl traits::PasswordKeyRetrieval for VmPasswordKeyRetrieval {
     fn key(&self) -> GkResult<OpaqueOr<HmacKey>> {
+        log::debug!("retrieving password key");
         let secret = self.get_or_create_secret()?;
         let key: [u8; 32] = HkdfSha256::derive(
             &secret,
