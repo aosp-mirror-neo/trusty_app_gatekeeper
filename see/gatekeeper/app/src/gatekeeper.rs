@@ -44,6 +44,7 @@ use log::info;
 use rpcbinder::RpcServer;
 use tipc::{service_dispatcher, wrap_service, Manager, PortCfg, TipcError};
 
+const MAX_CONNECTION_COUNT: usize = 3;
 const IGATEKEEPER_PORT: &str = "android.hardware.gatekeeper.IGatekeeper/default";
 
 struct TrustyMonotonicClock;
@@ -234,9 +235,7 @@ pub fn main_loop() -> Result<(), TipcError> {
     dispatcher
         .add_service(Rc::new(direct), cfg)
         .expect("failed to add direct IGateKeeper to dispatcher");
-    // Set max connection count to 2 in order to accommodate multiple connections.
-    // gatekeeperd establishes a connection, the other can be used by other clients/tests
-    Manager::<_, _, 1, 2>::new_with_dispatcher(dispatcher, [])
+    Manager::<_, _, 1, MAX_CONNECTION_COUNT>::new_with_dispatcher(dispatcher, [])
         .expect("Manager could not be created")
         .run_event_loop()
 }
