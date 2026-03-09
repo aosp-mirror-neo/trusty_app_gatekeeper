@@ -16,12 +16,9 @@
 
 //! This module implements the AuthKeyManagement trait for Gatekeeper
 
-use crate::{
-    common::{Context, GkResult},
-    trusted_hal::new_hw_crypto_key,
-};
+use crate::common::{Context, GkResult};
 use gk_ta::traits::{AuthKeyManagement, HmacKey, OpaqueOr};
-use hwcrypto_thal::HwCryptoHmac;
+use hwcrypto_thal::{HwCryptoHmac, HwCryptoKey};
 use log::warn;
 
 /// This struct wraps HwCryptoHmac and implements AuthKeyManagement for Gatekeeper.
@@ -32,9 +29,8 @@ pub(crate) struct HwCryptoAuthKey {
 
 impl HwCryptoAuthKey {
     /// Creates a new `HwCryptoAuthKey` instance.
-    pub(crate) fn new() -> GkResult<Self> {
-        let hw_crypto_key = new_hw_crypto_key()?;
-        Ok(Self { inner: hw_crypto_key.into() })
+    pub(crate) fn new(hw_crypto_key: HwCryptoKey) -> Self {
+        Self { inner: hw_crypto_key.into() }
     }
 }
 
@@ -46,7 +42,7 @@ impl AuthKeyManagement for HwCryptoAuthKey {
     fn key_agreed(&mut self, _key: OpaqueOr<HmacKey>) -> GkResult<()> {
         warn!(
             "HwCryptoAuthKey::key_agreed: HwCryptoHmac configured;
-        using KEYMINT_SHARED_HMAC_KEY for signing."
+             using KEYMINT_SHARED_HMAC_KEY for signing."
         );
         Ok(())
     }

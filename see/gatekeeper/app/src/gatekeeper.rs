@@ -16,7 +16,7 @@
 
 //! This module implements the IGatekeeper service with Trusted HAL
 
-use crate::{common::GkResult, filesystem::VmSecureFilesystem, hwcrypto_auth::HwCryptoAuthKey, password::VmPasswordKeyRetrieval};
+use crate::{common::GkResult, filesystem::VmSecureFilesystem, hwcrypto_auth::HwCryptoAuthKey, password::VmPasswordKeyRetrieval, trusted_hal::new_hw_crypto_key};
 use alloc::rc::Rc;
 use android_hardware_gatekeeper::aidl::android::hardware::gatekeeper::{
     GatekeeperEnrollResponse::GatekeeperEnrollResponse,
@@ -39,6 +39,7 @@ use gk_ta::{
     traits,
     GatekeeperTa,
 };
+use hwcrypto_thal::HwCryptoKey;
 use log::info;
 use rpcbinder::RpcServer;
 use tipc::{service_dispatcher, wrap_service, Manager, PortCfg, TipcError};
@@ -202,14 +203,14 @@ service_dispatcher! {
     }
 }
 
-fn new_gatekeeper_ta() -> GkResult<GatekeeperTa> {
+fn new_gatekeeper_ta(hw_crypto_key: HwCryptoKey) -> GkResult<GatekeeperTa> {
     let implementation = traits::Implementation {
         rng: Box::new(gk_boringssl::Rng),
         clock: Box::new(TrustyMonotonicClock),
         compare: Box::new(gk_boringssl::ConstEq),
         hmac: Box::new(gk_boringssl::HmacSha256),
         password: Box::new(VmPasswordKeyRetrieval::new()?),
-        auth_key: Box::new(HwCryptoAuthKey::new()?),
+        auth_key: Box::new(HwCryptoAuthKey::new(hw_crypto_key)),
         failures: Box::new(VmSecureFilesystem::new()?),
         shared_secret: None,
     };
@@ -218,7 +219,8 @@ fn new_gatekeeper_ta() -> GkResult<GatekeeperTa> {
 
 pub fn main_loop() -> Result<(), TipcError> {
     info!("Starting GateKeeper with Trusted HAL TA!");
-    let ta = new_gatekeeper_ta().expect("initialize GatekeeperTa");
+    let hw_crypto_key = new_hw_crypto_key().expect("Couldn't create HwCryptoKey.");
+    let ta = new_gatekeeper_ta(hw_crypto_key).expect("initialize GatekeeperTa");
     let service = GateKeeperWithTHal::new_binder(Fragile::new(RefCell::new(ta)));
     let direct_rpc_server = RpcServer::new(service.as_binder());
     let direct = IGatekeeperService(direct_rpc_server);
