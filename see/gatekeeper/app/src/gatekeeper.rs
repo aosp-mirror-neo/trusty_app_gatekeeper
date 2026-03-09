@@ -16,8 +16,14 @@
 
 //! This module implements the IGatekeeper service with Trusted HAL
 
-use crate::{common::GkResult, filesystem::VmSecureFilesystem, hwcrypto_auth::HwCryptoAuthKey, password::VmPasswordKeyRetrieval, trusted_hal::new_hw_crypto_key};
-use alloc::rc::Rc;
+use crate::{
+    common::GkResult,
+    filesystem::VmSecureFilesystem,
+    hwcrypto_auth::HwCryptoAuthKey,
+    password::VmPasswordKeyRetrieval,
+    trusted_hal::{new_early_persistent_fs_session, new_hw_crypto_key},
+};
+use alloc::{rc::Rc, sync::Arc};
 use android_hardware_gatekeeper::aidl::android::hardware::gatekeeper::{
     GatekeeperEnrollResponse::GatekeeperEnrollResponse,
     GatekeeperVerifyResponse::GatekeeperVerifyResponse,
@@ -42,6 +48,7 @@ use gk_ta::{
 use hwcrypto_thal::HwCryptoKey;
 use log::{debug, error, info};
 use rpcbinder::RpcServer;
+use secure_storage_aidl_wrapper::Session;
 use tipc::{service_dispatcher, wrap_service, Manager, PortCfg, TipcError};
 
 const MAX_CONNECTION_COUNT: usize = 3;
@@ -226,15 +233,16 @@ service_dispatcher! {
     }
 }
 
-fn new_gatekeeper_ta(hw_crypto_key: HwCryptoKey) -> GkResult<GatekeeperTa> {
+fn new_gatekeeper_ta(hw_crypto_key: HwCryptoKey, session: Session) -> GkResult<GatekeeperTa> {
+    let session = Arc::new(session);
     let implementation = traits::Implementation {
         rng: Box::new(gk_boringssl::Rng),
         clock: Box::new(TrustyMonotonicClock),
         compare: Box::new(gk_boringssl::ConstEq),
         hmac: Box::new(gk_boringssl::HmacSha256),
-        password: Box::new(VmPasswordKeyRetrieval::new()?),
+        password: Box::new(VmPasswordKeyRetrieval::new(session.clone())),
         auth_key: Box::new(HwCryptoAuthKey::new(hw_crypto_key)),
-        failures: Box::new(VmSecureFilesystem::new()?),
+        failures: Box::new(VmSecureFilesystem::new(session)),
         shared_secret: None,
     };
     Ok(GatekeeperTa::new(implementation))
@@ -243,7 +251,9 @@ fn new_gatekeeper_ta(hw_crypto_key: HwCryptoKey) -> GkResult<GatekeeperTa> {
 pub fn main_loop() -> Result<(), TipcError> {
     info!("Starting GateKeeper with Trusted HAL TA!");
     let hw_crypto_key = new_hw_crypto_key().expect("Couldn't create HwCryptoKey.");
-    let ta = new_gatekeeper_ta(hw_crypto_key).expect("initialize GatekeeperTa");
+    let session =
+        new_early_persistent_fs_session().expect("Couldn't create secure storage session");
+    let ta = new_gatekeeper_ta(hw_crypto_key, session).expect("initialize GatekeeperTa");
     let service = GateKeeperWithTHal::new_binder(Fragile::new(RefCell::new(ta)));
     let direct_rpc_server = RpcServer::new(service.as_binder());
     let direct = IGatekeeperService(direct_rpc_server);

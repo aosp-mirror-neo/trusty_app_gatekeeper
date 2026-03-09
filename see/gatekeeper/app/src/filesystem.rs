@@ -16,22 +16,19 @@
 
 //! This module implements the SecureFilesystem trait for Gatekeeper
 
-use crate::{
-    common::{Context, GkResult},
-    trusted_hal::new_early_persistent_fs_session,
-};
-use alloc::vec;
+use crate::common::{Context, GkResult};
+use alloc::{sync::Arc, vec};
 use gk_ta::{traits, Error};
 use log::debug;
 use secure_storage_aidl_wrapper::{Session, OPEN_READ_WRITE};
 
 pub(crate) struct VmSecureFilesystem {
-    session: Session,
+    session: Arc<Session>,
 }
 
 impl VmSecureFilesystem {
-    pub(crate) fn new() -> GkResult<Self> {
-        new_early_persistent_fs_session().map(|session| Self { session })
+    pub(crate) fn new(session: Arc<Session>) -> Self {
+        Self { session }
     }
 }
 
