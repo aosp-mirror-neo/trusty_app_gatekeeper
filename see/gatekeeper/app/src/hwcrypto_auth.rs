@@ -19,7 +19,7 @@
 use crate::common::{Context, GkResult};
 use gk_ta::traits::{AuthKeyManagement, HmacKey, OpaqueOr};
 use hwcrypto_thal::{HwCryptoHmac, HwCryptoKey};
-use log::warn;
+use log::{debug, warn};
 
 /// This struct wraps HwCryptoHmac and implements AuthKeyManagement for Gatekeeper.
 #[derive(Debug)]
@@ -36,6 +36,7 @@ impl HwCryptoAuthKey {
 
 impl AuthKeyManagement for HwCryptoAuthKey {
     fn sign(&self, data: &[u8]) -> GkResult<Vec<u8>> {
+        debug!("sign auth key");
         self.inner.hmac(data).context("sign auth key")
     }
 

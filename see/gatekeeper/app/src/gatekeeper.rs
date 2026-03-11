@@ -16,8 +16,14 @@
 
 //! This module implements the IGatekeeper service with Trusted HAL
 
-use crate::{common::GkResult, filesystem::VmSecureFilesystem, hwcrypto_auth::HwCryptoAuthKey, password::VmPasswordKeyRetrieval, trusted_hal::new_hw_crypto_key};
-use alloc::rc::Rc;
+use crate::{
+    common::GkResult,
+    filesystem::VmSecureFilesystem,
+    hwcrypto_auth::HwCryptoAuthKey,
+    password::VmPasswordKeyRetrieval,
+    trusted_hal::{new_early_persistent_fs_session, new_hw_crypto_key},
+};
+use alloc::{rc::Rc, sync::Arc};
 use android_hardware_gatekeeper::aidl::android::hardware::gatekeeper::{
     GatekeeperEnrollResponse::GatekeeperEnrollResponse,
     GatekeeperVerifyResponse::GatekeeperVerifyResponse,
@@ -40,10 +46,12 @@ use gk_ta::{
     GatekeeperTa,
 };
 use hwcrypto_thal::HwCryptoKey;
-use log::info;
+use log::{debug, error, info};
 use rpcbinder::RpcServer;
+use secure_storage_aidl_wrapper::Session;
 use tipc::{service_dispatcher, wrap_service, Manager, PortCfg, TipcError};
 
+const MAX_CONNECTION_COUNT: usize = 3;
 const IGATEKEEPER_PORT: &str = "android.hardware.gatekeeper.IGatekeeper/default";
 
 struct TrustyMonotonicClock;
@@ -95,11 +103,13 @@ impl binder::Interface for GateKeeperWithTHal {}
 
 impl IGatekeeper for GateKeeperWithTHal {
     fn deleteAllUsers(&self) -> binder::Result<()> {
+        debug!("deleteAllUsers");
         let mut ta = self.ta()?;
         Ok(ta.delete_all_users().map_err(gk_ta_error_to_service_error)?)
     }
 
     fn deleteUser(&self, user_id: i32) -> binder::Result<()> {
+        debug!("deleteUser: user_id={user_id}");
         let mut ta = self.ta()?;
         let user_id = gk_wire::AndroidUserId(user_id);
         Ok(ta.delete_user(user_id).map_err(gk_ta_error_to_service_error)?)
@@ -112,6 +122,7 @@ impl IGatekeeper for GateKeeperWithTHal {
         current_password: &[u8],
         new_password: &[u8],
     ) -> binder::Result<GatekeeperEnrollResponse> {
+        debug!("enroll: user_id={user_id:?}");
         let mut ta = self.ta()?;
         let user_id = gk_wire::AndroidUserId(user_id);
         let current_handle = gk_wire::PasswordHandle::from_raw(current_handle);
@@ -119,19 +130,28 @@ impl IGatekeeper for GateKeeperWithTHal {
         let new_password = gk_wire::Password(new_password.to_vec());
         let response = ta.enroll(user_id, &current_handle, &current_password, &new_password);
         match response {
-            Ok((sid, handle)) => Ok(GatekeeperEnrollResponse {
-                statusCode: STATUS_OK,
-                timeoutMs: 0,
-                secureUserId: sid.0,
-                data: handle.0,
-            }),
-            Err(gk_ta::Error::RetryTimeout(timeout)) => Ok(GatekeeperEnrollResponse {
-                statusCode: ERROR_RETRY_TIMEOUT,
-                timeoutMs: timeout,
-                secureUserId: 0,
-                data: Vec::new(),
-            }),
-            Err(e) => Err(gk_ta_error_to_service_error(e)),
+            Ok((sid, handle)) => {
+                info!("enroll: success for user_id={user_id:?}");
+                Ok(GatekeeperEnrollResponse {
+                    statusCode: STATUS_OK,
+                    timeoutMs: 0,
+                    secureUserId: sid.0,
+                    data: handle.0,
+                })
+            }
+            Err(gk_ta::Error::RetryTimeout(timeout)) => {
+                info!("enroll: retry timeout {timeout}ms for user_id={user_id:?}");
+                Ok(GatekeeperEnrollResponse {
+                    statusCode: ERROR_RETRY_TIMEOUT,
+                    timeoutMs: timeout,
+                    secureUserId: 0,
+                    data: Vec::new(),
+                })
+            }
+            Err(e) => {
+                error!("enroll: failed for user_id={user_id:?}: {e:?}");
+                Err(gk_ta_error_to_service_error(e))
+            }
         }
     }
 
@@ -142,23 +162,33 @@ impl IGatekeeper for GateKeeperWithTHal {
         handle: &[u8],
         password: &[u8],
     ) -> binder::Result<GatekeeperVerifyResponse> {
+        debug!("verify: user_id={user_id:?}, challenge={challenge}");
         let mut ta = self.ta()?;
         let user_id = gk_wire::AndroidUserId(user_id);
         let handle = gk_wire::PasswordHandle(handle.to_vec());
         let password = gk_wire::Password(password.to_vec());
         let response = ta.verify(user_id, challenge, &handle, &password);
         match response {
-            Ok((request_reenroll, auth_token)) => Ok(GatekeeperVerifyResponse {
-                statusCode: if request_reenroll { STATUS_REENROLL } else { STATUS_OK },
-                timeoutMs: 0,
-                hardwareAuthToken: token_to_aidl(auth_token),
-            }),
-            Err(gk_ta::Error::RetryTimeout(timeout)) => Ok(GatekeeperVerifyResponse {
-                statusCode: ERROR_RETRY_TIMEOUT,
-                timeoutMs: timeout,
-                hardwareAuthToken: empty_auth_token(),
-            }),
-            Err(e) => Err(gk_ta_error_to_service_error(e)),
+            Ok((request_reenroll, auth_token)) => {
+                info!("verify: success for user_id={user_id:?} (reenroll={request_reenroll})");
+                Ok(GatekeeperVerifyResponse {
+                    statusCode: if request_reenroll { STATUS_REENROLL } else { STATUS_OK },
+                    timeoutMs: 0,
+                    hardwareAuthToken: token_to_aidl(auth_token),
+                })
+            }
+            Err(gk_ta::Error::RetryTimeout(timeout)) => {
+                info!("verify: retry timeout {timeout}ms for user_id={user_id:?}");
+                Ok(GatekeeperVerifyResponse {
+                    statusCode: ERROR_RETRY_TIMEOUT,
+                    timeoutMs: timeout,
+                    hardwareAuthToken: empty_auth_token(),
+                })
+            }
+            Err(e) => {
+                error!("verify: failed for user_id={user_id:?}: {e:?}");
+                Err(gk_ta_error_to_service_error(e))
+            }
         }
     }
 }
@@ -203,15 +233,16 @@ service_dispatcher! {
     }
 }
 
-fn new_gatekeeper_ta(hw_crypto_key: HwCryptoKey) -> GkResult<GatekeeperTa> {
+fn new_gatekeeper_ta(hw_crypto_key: HwCryptoKey, session: Session) -> GkResult<GatekeeperTa> {
+    let session = Arc::new(session);
     let implementation = traits::Implementation {
         rng: Box::new(gk_boringssl::Rng),
         clock: Box::new(TrustyMonotonicClock),
         compare: Box::new(gk_boringssl::ConstEq),
         hmac: Box::new(gk_boringssl::HmacSha256),
-        password: Box::new(VmPasswordKeyRetrieval::new()?),
+        password: Box::new(VmPasswordKeyRetrieval::new(session.clone())),
         auth_key: Box::new(HwCryptoAuthKey::new(hw_crypto_key)),
-        failures: Box::new(VmSecureFilesystem::new()?),
+        failures: Box::new(VmSecureFilesystem::new(session)),
         shared_secret: None,
     };
     Ok(GatekeeperTa::new(implementation))
@@ -220,7 +251,9 @@ fn new_gatekeeper_ta(hw_crypto_key: HwCryptoKey) -> GkResult<GatekeeperTa> {
 pub fn main_loop() -> Result<(), TipcError> {
     info!("Starting GateKeeper with Trusted HAL TA!");
     let hw_crypto_key = new_hw_crypto_key().expect("Couldn't create HwCryptoKey.");
-    let ta = new_gatekeeper_ta(hw_crypto_key).expect("initialize GatekeeperTa");
+    let session =
+        new_early_persistent_fs_session().expect("Couldn't create secure storage session");
+    let ta = new_gatekeeper_ta(hw_crypto_key, session).expect("initialize GatekeeperTa");
     let service = GateKeeperWithTHal::new_binder(Fragile::new(RefCell::new(ta)));
     let direct_rpc_server = RpcServer::new(service.as_binder());
     let direct = IGatekeeperService(direct_rpc_server);
@@ -234,9 +267,7 @@ pub fn main_loop() -> Result<(), TipcError> {
     dispatcher
         .add_service(Rc::new(direct), cfg)
         .expect("failed to add direct IGateKeeper to dispatcher");
-    // Set max connection count to 2 in order to accommodate multiple connections.
-    // gatekeeperd establishes a connection, the other can be used by other clients/tests
-    Manager::<_, _, 1, 2>::new_with_dispatcher(dispatcher, [])
+    Manager::<_, _, 1, MAX_CONNECTION_COUNT>::new_with_dispatcher(dispatcher, [])
         .expect("Manager could not be created")
         .run_event_loop()
 }

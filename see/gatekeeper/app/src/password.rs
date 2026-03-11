@@ -17,7 +17,7 @@
 //! This module implements the PasswordKeyRetrieval trait for Gatekeeper
 
 use crate::common::{Context, GkResult};
-use crate::trusted_hal::new_early_persistent_fs_session;
+use alloc::sync::Arc;
 use bssl_crypto::{
     hkdf::{self, HkdfSha256},
     rand_bytes,
@@ -34,15 +34,12 @@ const PASSWORD_KEY_SALT: [u8; 32] = [
 const PASSWORD_KEY_SECRET_LEN: usize = 32;
 
 pub(crate) struct VmPasswordKeyRetrieval {
-    session: Session,
+    session: Arc<Session>,
 }
 
 impl VmPasswordKeyRetrieval {
-    pub(crate) fn new() -> GkResult<Self> {
-        Ok(Self {
-            session: new_early_persistent_fs_session()
-                .context("Create Persistent filesystem session")?,
-        })
+    pub(crate) fn new(session: Arc<Session>) -> Self {
+        Self { session }
     }
 
     fn get_or_create_secret(&self) -> GkResult<Vec<u8>> {
@@ -79,6 +76,7 @@ impl VmPasswordKeyRetrieval {
 
 impl traits::PasswordKeyRetrieval for VmPasswordKeyRetrieval {
     fn key(&self) -> GkResult<OpaqueOr<HmacKey>> {
+        log::debug!("retrieving password key");
         let secret = self.get_or_create_secret()?;
         let key: [u8; 32] = HkdfSha256::derive(
             &secret,
