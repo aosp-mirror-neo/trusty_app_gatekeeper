@@ -28,7 +28,7 @@ use crate::gatekeeper::main_loop;
 fn log_formatter(record: &log::Record) -> String {
     let line = record.line().unwrap_or(0);
     let file = record.file().unwrap_or("unknown file");
-    format!("{}: gatekeeper-in-vm: {}:{} {}\n", record.level(), file, line, record.args())
+    format!("{}: gk-in-vm:{}:{} {}\n", record.level(), file, line, record.args())
 }
 
 fn main() {
