@@ -33,7 +33,7 @@ fn log_formatter(record: &log::Record) -> String {
 
 fn main() {
     let config = trusty_log::TrustyLoggerConfig::default()
-        .with_min_level(log::Level::Debug)
+        .with_min_level(trusty_log::get_debug_level!())
         .format(&log_formatter);
 
     trusty_log::init_with_config(config);
