@@ -40,11 +40,13 @@ impl traits::SecureFilesystem for VmSecureFilesystem {
     }
     fn write(&self, filename: &str, data: &[u8]) -> GkResult<()> {
         debug!("write: filename={filename}");
-        self.session.write_file(filename, data, &OPEN_READ_WRITE).context("write to file")
+        self.session.write_file(filename, data, &OPEN_READ_WRITE).context("write to file")?;
+        self.session.commit().context("commit write to file")
     }
     fn delete(&self, filename: &str) -> GkResult<()> {
         debug!("delete: filename={filename}");
-        self.session.delete_file(filename).context("delete file")
+        self.session.delete_file(filename).context("delete file")?;
+        self.session.commit().context("commit delete file")
     }
     fn list(&self) -> GkResult<Self::Iter> {
         debug!("list files");
